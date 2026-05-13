@@ -967,6 +967,27 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
                     st.error(_friendly_api_error(exc))
 
 
+def _resolve_audit_history_sort_column(df: pd.DataFrame) -> str | None:
+    """Pick a column for newest-first drift-history sorting.
+
+    The export sheet labels evaluation time ``created_utc`` (ISO string from
+    :class:`~ctis_drift.core.storage.DriftRunRecord`). Other layers or future
+    refactors may align frame columns with SQLModel field names—for example
+    ``timestamp`` on snapshot rows—or the list comprehension may yield **zero
+    rows**, in which case pandas builds an empty DataFrame with **no columns**
+    and ``sort_values(by="created_utc")`` raises ``KeyError`` on Streamlit Cloud.
+
+    Resolution prefers chronological-looking columns, then ``id``, then falls back to
+    the first remaining column so exports stay operational across schema drift.
+    """
+    if df.shape[1] == 0:
+        return None
+    for candidate in ("created_utc", "timestamp", "created_at", "UTC time", "id"):
+        if candidate in df.columns:
+            return candidate
+    return str(df.columns[0])
+
+
 def render_global_exports(storage: StorageService) -> None:
     trials = fetch_trial_records(storage)
     runs = storage.recent_runs(limit=2_000)
@@ -987,6 +1008,22 @@ def render_global_exports(storage: StorageService) -> None:
         ]
     )
 
+    # Empty run lists produce a column-less frame; sorting must skip until data exists.
+    if hist.shape[1] == 0:
+        st.info(
+            "No archived drift evaluations yet. Workbook and PDF exports still "
+            "include the monitoring register and an empty drift history sheet."
+        )
+        sample_rows: list[dict[str, Any]] = []
+    else:
+        sort_col = _resolve_audit_history_sort_column(hist)
+        hist_ordered = (
+            hist.sort_values(by=sort_col, ascending=False, na_position="last")
+            if sort_col is not None
+            else hist
+        )
+        sample_rows = list(hist_ordered.head(30).astype(str).to_dict("records"))
+
     ex1, ex2 = st.columns(2)
     with ex1:
         try:
@@ -1003,12 +1040,6 @@ def render_global_exports(storage: StorageService) -> None:
             st.error("Excel export unavailable (see logs). Confirm `openpyxl` installation.")
 
     with ex2:
-        sample_rows = list(
-            hist.sort_values(by="created_utc", ascending=False)
-            .head(30)
-            .astype(str)
-            .to_dict("records")
-        )
         try:
             pbytes = export_pdf_bytes(
                 f"{len(df_mon)} trials registered; {len(hist)} evaluation rows archived.",
