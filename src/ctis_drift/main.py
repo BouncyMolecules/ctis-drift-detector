@@ -504,7 +504,14 @@ def sidebar_shell(settings: Settings, storage: StorageService) -> None:
                 "Workbook mirrors TMF traceability worksheets; PDF is a concise appendix—"
                 "refresh before regulatory submissions."
             )
-            render_global_exports(storage)
+            try:
+                render_global_exports(storage)
+            except Exception:
+                logger.exception("Sidebar audit exports failed")
+                st.warning(
+                    "Exports could not be prepared (empty database, missing dependency, or "
+                    "transient error). Refresh the page after the first data load, or check logs."
+                )
 
         st.divider()
         st.markdown("**Environment snapshot**")
@@ -624,6 +631,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
                 type="primary",
                 disabled=not target,
                 use_container_width=True,
+                key="portfolio_btn_run_ctis_drift_check",
                 help=(
                     "Fetches the live trial JSON, compares to baseline, and logs a drift run."
                 ),
@@ -653,6 +661,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
             if st.button(
                 "Smoke-test API (search)",
                 use_container_width=True,
+                key="portfolio_btn_smoke_test_api_search",
             ):
                 with st.spinner("Running minimal search probe …"):
                     try:
@@ -666,6 +675,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
             if st.button(
                 "Demo numeric drift (sandbox)",
                 use_container_width=True,
+                key="portfolio_btn_demo_numeric_drift",
                 help="Creates a synthetic numeric drift report for UI validation — not CTIS data.",
             ):
                 with st.spinner("Scoring synthetic series …"):
@@ -818,6 +828,7 @@ def tab_manage_trials(storage: StorageService) -> None:
             "Ingest CTIS retrieve payload",
             type="primary",
             disabled=not (euct_new or "").strip(),
+            key="manage_btn_ingest_ctis_retrieve",
         ):
             euct_clean = euct_new.strip().strip("/")
             with st.spinner("Retrieving authoritative CTIS payload …"):
@@ -896,7 +907,7 @@ def tab_manage_trials(storage: StorageService) -> None:
             _bump_data_refresh()
             st.success(f"Snapshot anchored for `{key_manual}`.")
 
-        if st.button("Save pasted JSON as snapshot"):
+        if st.button("Save pasted JSON as snapshot", key="manage_btn_manual_json_save_snapshot"):
             _save_manual()
 
 
@@ -907,7 +918,7 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
     t_search, t_retrieve, t_health = st.tabs(["POST /search", "GET /retrieve/{euct}", "Health"])
 
     with t_health:
-        if st.button("Run health(search=1)", key="health_btn"):
+        if st.button("Run health(search=1)", key="explorer_btn_health_probe"):
             with st.spinner("Probing …"):
                 try:
                     st.success("OK — parsed envelope returned below.")
@@ -920,32 +931,46 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
             '{"pagination":{"page":1,"size":5},'
             '"sort":{"property":"decisionDate","direction":"DESC"}}'
         )
-        body = st.text_area("Search payload JSON (`searchCriteria` optional)", defaults, height=180)
-        if st.button("Execute search"):
-            try:
-                model = TrialSearchPayload.model_validate_json(body)
-                with st.spinner("Waiting on CTIS (may take up to configured timeout) …"):
-                    resp = client.search_trials(model)
-                    st.download_button(
-                        "Download serialised envelope",
-                        data=resp.model_dump_json(by_alias=True),
-                        file_name=f"search_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json",
-                    )
-                    st.success(f"Fetched {len(resp.data)} rows (pagination aware).")
-                    st.dataframe(
-                        pd.DataFrame([h.model_dump(by_alias=True) for h in resp.data]),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(560, 200 + len(resp.data) * 42),
-                    )
-            except (json.JSONDecodeError, ValidationError) as exc:
-                st.error("Payload invalid.")
-                st.code(str(exc))
+        body = st.text_area(
+            "Search payload JSON (`searchCriteria` optional)",
+            defaults,
+            height=180,
+            key="explorer_search_payload_json",
+        )
+        if st.button("Execute search", key="explorer_btn_search_execute"):
+            body_text = (body or "").strip()
+            if not body_text:
+                st.info("Use the default JSON or paste a search payload, then execute again.")
+            else:
+                try:
+                    model = TrialSearchPayload.model_validate_json(body_text)
+                    with st.spinner("Waiting on CTIS (may take up to configured timeout) …"):
+                        resp = client.search_trials(model)
+                        st.download_button(
+                            "Download serialised envelope",
+                            data=resp.model_dump_json(by_alias=True),
+                            file_name=f"search_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json",
+                            mime="application/json",
+                            key="explorer_dl_search_envelope_serialised",
+                        )
+                        st.success(f"Fetched {len(resp.data)} rows (pagination aware).")
+                        st.dataframe(
+                            pd.DataFrame([h.model_dump(by_alias=True) for h in resp.data]),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(560, 200 + len(resp.data) * 42),
+                        )
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    st.error("Payload invalid.")
+                    st.code(str(exc))
 
     with t_retrieve:
-        euct_probe = st.text_input("EU CT Number", key="retrieve_euct")
-        if st.button("Execute retrieve"):
+        euct_probe = st.text_input(
+            "EU CT Number",
+            key="explorer_input_retrieve_euct",
+            placeholder="e.g. 2024-518143-38-00",
+        )
+        if st.button("Execute retrieve", key="explorer_btn_retrieve_execute"):
             if not euct_probe.strip():
                 st.warning("Enter a trial identifier.")
             else:
@@ -961,7 +986,7 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
                             data=payload,
                             file_name=f"retrieve_{euct_probe.strip()}.json",
                             mime="application/json",
-                            key="dl_retrieve_probe",
+                            key="explorer_dl_retrieve_full_json",
                         )
                 except CtisPublicApiError as exc:
                     st.error(_friendly_api_error(exc))
@@ -993,6 +1018,12 @@ def render_global_exports(storage: StorageService) -> None:
     runs = storage.recent_runs(limit=2_000)
     lookup = latest_run_lookup(runs)
     df_mon = build_monitored_dataframe(trials, lookup=lookup)
+
+    if not trials:
+        st.caption(
+            "First-run workspace: enrol at least one trial to populate the monitoring register "
+            "sheet; drift history fills after the first evaluations."
+        )
 
     hist = pd.DataFrame(
         [
@@ -1034,6 +1065,7 @@ def render_global_exports(storage: StorageService) -> None:
                 file_name=f"ctis_drift_audit_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.xlsx",
                 mime=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
                 use_container_width=True,
+                key="sidebar_dl_export_audit_workbook_xlsx",
             )
         except Exception:
             logger.exception("Excel export blocked")
@@ -1051,6 +1083,7 @@ def render_global_exports(storage: StorageService) -> None:
                 file_name=f"ctis_drift_summary_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
+                key="sidebar_dl_export_summary_pdf",
             )
         except Exception:
             logger.exception("PDF export blocked")
