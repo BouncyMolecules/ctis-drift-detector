@@ -1,15 +1,32 @@
-# Pinned runtime deps (install: pip install -r requirements.txt)
-# Regenerate with: pip-compile pyproject.toml (optional, if using pip-tools)
+# -----------------------------------------------------------------------------
+# Streamlit Community Cloud — dependency policy
+# -----------------------------------------------------------------------------
+# Lower bounds (>=) let pip pick wheels built for the Cloud image's Python and
+# platform. Exact pins (==) often force source builds when no matching wheel
+# exists for that ABI—common pain points: pandas, numpy stack, SQLAlchemy.
+# Functionality stays the same; resolver upgrades within compatible releases.
+# Pin only if you need reproducible offline/validated builds elsewhere.
+# -----------------------------------------------------------------------------
+# Python: set Advanced settings → Python 3.11 in Streamlit Cloud when offered
+# (matches pyproject.toml requires-python).
+# -----------------------------------------------------------------------------
 
-streamlit==1.40.2
-httpx==0.27.2
-requests==2.32.3
-pandas==2.2.3
-openpyxl==3.1.5
-fpdf2==2.8.2
-plotly==5.24.1
-pydantic==2.10.3
-pydantic-settings==2.6.1
-sqlmodel==0.0.22
-SQLAlchemy==2.0.36
-python-dotenv==1.0.1
+# UI & charts
+streamlit>=1.40.0
+plotly>=5.24.0
+
+# HTTP & env (CTIS transport; Streamlit / ecosystem stacks often expect requests)
+httpx>=0.27.0
+requests>=2.32.0
+
+# Data & exports
+pandas>=2.2.0
+openpyxl>=3.1.0
+fpdf2>=2.8.0
+
+# Config & persistence (SQLAlchemy is a direct import in storage; keep explicit)
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+sqlmodel>=0.0.22
+SQLAlchemy>=2.0.36
+python-dotenv>=1.0.0
