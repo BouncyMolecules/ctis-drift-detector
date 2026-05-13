@@ -1,0 +1,39 @@
+# CTIS Drift Sentinel — Streamlit defaults (committed; safe for public repos).
+#
+# Secrets and API credentials NEVER belong here — use Streamlit Cloud Dashboard
+# → your app → ⚙ Secrets (managed `secrets.toml` on the host).
+#
+# Community Cloud terminates TLS and binds its own process; `[server]` block is
+# most relevant for local `streamlit run` and bespoke hosting.
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
+
+[runner]
+fastReruns = true
+magicEnabled = true
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+# Appearance: toggle Light / Dark in the Streamlit app menu (*Settings → Theme*).
+# You can lock a default appearance by setting `base` to "light" or "dark".
+
+[theme]
+base = "light"
+primaryColor = "#0f4f6b"
+backgroundColor = "#f7fafc"
+secondaryBackgroundColor = "#eef3f8"
+textColor = "#17242e"
+font = "sans serif"
+
+[logger]
+level = "info"

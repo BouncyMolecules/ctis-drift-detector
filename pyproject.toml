@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ctis-drift-detector"
+version = "0.1.0"
+description = "Production-grade Streamlit app for CTIS clinical trial drift detection."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "CTIS Drift Team" }]
+keywords = ["streamlit", "ctis", "drift-detection", "clinical-trials"]
+dependencies = [
+    "streamlit>=1.40.0",
+    "httpx>=0.27.0",
+    "requests>=2.32.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "fpdf2>=2.8.0",
+    "plotly>=5.24.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "sqlmodel>=0.0.22",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.13.0",
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+    "types-requests>=2.32.0",
+    "pandas-stubs>=2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/ctis-drift-detector"
+
+[project.scripts]
+ctis-drift-app = "ctis_drift.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ctis_drift"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ctis_drift", "README.md"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_untyped_decorators = false
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "sqlmodel.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sqlalchemy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "streamlit.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "plotly.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: full-stack integration against live euclinicaltrials.eu public API",
+    "network: requires outbound HTTPS access",
+]
