@@ -234,7 +234,7 @@ data/                  Local SQLite default location (ignored except `.gitkeep`)
 
 ## Attribution & connect
 
-Architected by **Ela Halilovic** — Regulatory Operations Speacialist at the convergence of dossier stewardship, vigilance-aligned operations design, and defensible automation.
+Architected by **Ela Halilovic** — Regulatory Operations Specialist at the convergence of dossier stewardship, vigilance-aligned operations design, and defensible automation.
 
 | Channel | Purpose |
 | :--- | :--- |
