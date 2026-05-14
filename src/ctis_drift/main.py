@@ -33,6 +33,19 @@ from ctis_drift.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
+# -----------------------------------------------------------------------------
+# Streamlit widget keys (production rule set)
+# -----------------------------------------------------------------------------
+# The script runs once per interaction; widgets in different ``st.tabs`` still
+# share Streamlit's global element-ID namespace. Omitting ``key`` collides when
+# the same widget type appears twice (e.g. two ``st.plotly_chart`` calls — the
+# classic ``StreamlitDuplicateElementId`` failure on Community Cloud).
+#
+# Convention: prefix by surface — ``sidebar_*``, ``monitored_*``, ``history_*``,
+# ``manage_*``, ``explorer_*``. In loops, suffix with stable IDs (trial id, run PK).
+# Keys must stay stable across reruns (do not embed timestamps or random values).
+# -----------------------------------------------------------------------------
+
 _SS_ACTION_TRIAL: Final[str] = "_ctis_action_trial_euct"
 _SS_REFRESH_TOKEN: Final[str] = "_ctis_data_refresh"
 
@@ -49,6 +62,17 @@ def _init_session_defaults() -> None:
 
 def _bump_data_refresh() -> None:
     st.session_state[_SS_REFRESH_TOKEN] = int(st.session_state.get(_SS_REFRESH_TOKEN, 0)) + 1
+
+
+def _maybe_show_traceback(settings: Settings) -> None:
+    """Gate raw tracebacks so Community Cloud visitors never see stack traces by default."""
+    if settings.streamlit_debug_tracebacks:
+        st.code(traceback.format_exc())
+    else:
+        st.caption(
+            "Operators: set environment variable CTIS_DRIFT_STREAMLIT_DEBUG=true "
+            "to expose full tracebacks."
+        )
 
 
 def inject_app_theme_styles() -> None:
@@ -253,7 +277,7 @@ def _risk_level_hex_bg(level: str) -> str:
 def fig_change_frequency_histogram(runs: Sequence[DriftRunRecord]) -> go.Figure:
     days: list[str] = []
     for r in runs:
-        d = r.created_at.astimezone(UTC).date()
+        d = _run_dt_utc(r).date()
         days.append(str(d))
     tally = Counter(days)
     if not tally:
@@ -327,6 +351,23 @@ def _run_dt_utc(run: DriftRunRecord) -> datetime:
         return ts.astimezone(UTC)
     # Extremely defensive: orphaned rows — anchor to UNIX epoch rather than crashing the chart.
     return datetime.fromtimestamp(0, tz=UTC)
+
+
+def _format_run_timestamp_utc(run: DriftRunRecord) -> str:
+    """Display string for tables/expanders; tolerant of partial ORM rows."""
+
+    ts = getattr(run, "created_at", None)
+    if isinstance(ts, datetime):
+        return ts.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    rid = getattr(run, "id", None)
+    return f"(unknown time · row id {rid})" if rid is not None else "(unknown time)"
+
+
+def _safe_drift_score_01(run: DriftRunRecord) -> float:
+    try:
+        return round(float(getattr(run, "drift_score", 0.0)), 4)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def fig_risk_trend(runs_for_trial: Sequence[DriftRunRecord], *, title: str) -> go.Figure:
@@ -577,7 +618,7 @@ def sidebar_shell(settings: Settings, storage: StorageService) -> None:
         st.markdown("#### CTIS Drift Sentinel")
         st.caption("Substantive change detection for EU CTIS public artefacts")
 
-        with st.expander("Audit bundle exports (Excel & PDF)", expanded=False):
+        with st.expander("Audit bundle exports (Excel & PDF)", expanded=False, key="sidebar_expander_audit_bundle_exports"):
             st.caption(
                 "Workbook mirrors TMF traceability worksheets; PDF is a concise appendix—"
                 "refresh before regulatory submissions."
@@ -598,12 +639,19 @@ def sidebar_shell(settings: Settings, storage: StorageService) -> None:
             "Log level",
             value=settings.log_level,
             disabled=True,
+            key="sidebar_env_snapshot_log_level",
         )
-        st.text_input("API base", value=settings.api_base_url, disabled=True)
+        st.text_input(
+            "API base",
+            value=settings.api_base_url,
+            disabled=True,
+            key="sidebar_env_snapshot_api_base_url",
+        )
         st.toggle(
             "Mock API flag (`CTIS_DRIFT_ENABLE_MOCK_API`)",
             value=settings.enable_mock_api,
             disabled=True,
+            key="sidebar_env_snapshot_mock_api_toggle",
         )
 
         st.divider()
@@ -624,7 +672,7 @@ def bootstrap_runtime(settings: Settings) -> tuple[StorageService, CTISAPIClient
             "The surveillance database could not be initialised. "
             "Confirm `CTIS_DRIFT_DATABASE_URL` points at a writable path."
         )
-        st.code(traceback.format_exc())
+        _maybe_show_traceback(settings)
         st.stop()
 
     client_local = CTISAPIClient(
@@ -635,7 +683,7 @@ def bootstrap_runtime(settings: Settings) -> tuple[StorageService, CTISAPIClient
     return storage_local, client_local
 
 
-def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None:
+def tab_monitored_trials(storage: StorageService, client: CTISAPIClient, settings: Settings) -> None:
     _ = st.session_state.get(_SS_REFRESH_TOKEN, 0)
     runs = storage.recent_runs(limit=2_000)
     trials = fetch_trial_records(storage)
@@ -688,6 +736,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
                 use_container_width=True,
                 hide_index=True,
                 height=min(520, 48 + 36 * len(df)),
+                key="monitored_df_portfolio_register_styled",
                 column_config={
                     "EU CT Number": scc.TextColumn("EU CT number", width="medium"),
                     "Risk band": scc.TextColumn("Risk band", width="small"),
@@ -698,7 +747,12 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
             )
         except Exception:
             logger.exception("Styled dataframe render failed; falling back to plain table")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                key="monitored_df_portfolio_register_plain_fallback",
+            )
 
         st.markdown("**Quick actions**")
         qa1, qa2, qa3 = st.columns([1, 1, 1])
@@ -733,7 +787,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
                     except Exception:
                         logger.exception("Drift check failed")
                         st.error("An unexpected error occurred while evaluating drift.")
-                        st.code(traceback.format_exc())
+                        _maybe_show_traceback(settings)
 
         with qa2:
             if st.button(
@@ -776,7 +830,11 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
     st.subheader("Portfolio signals")
     col_a, col_b = st.columns(2, gap="large")
     with col_a:
-        st.plotly_chart(fig_change_frequency_histogram(runs), use_container_width=True)
+        st.plotly_chart(
+            fig_change_frequency_histogram(runs),
+            use_container_width=True,
+            key="monitored_plot_activity_histogram_all_runs",
+        )
     with col_b:
         trial_pick_options = sorted({r.trial_id for r in runs}, key=str)
         if not trial_pick_options:
@@ -798,6 +856,7 @@ def tab_monitored_trials(storage: StorageService, client: CTISAPIClient) -> None
             st.plotly_chart(
                 fig_risk_trend(chart_runs, title=f"Risk trajectory — {picked}"),
                 use_container_width=True,
+                key="monitored_plot_risk_trajectory_for_selected_trial",
             )
 
 
@@ -820,34 +879,43 @@ def tab_drift_history(storage: StorageService) -> None:
     filtered = (
         list(runs) if filter_trial == "(all)" else [r for r in runs if r.trial_id == filter_trial]
     )
+    # Newest-first table + charts; ordering key tolerates missing ``created_at``.
+    filtered_sorted = sorted(filtered, key=_drift_run_sort_key, reverse=True)
 
     hist_df = pd.DataFrame(
         {
-            "UTC time": [
-                r.created_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") for r in filtered
-            ],
-            "Trial": [r.trial_id for r in filtered],
-            "Metric": [r.metric_name for r in filtered],
-            "Method": [r.method for r in filtered],
-            "Score (0–1)": [round(float(r.drift_score), 4) for r in filtered],
+            "UTC time": [_format_run_timestamp_utc(r) for r in filtered_sorted],
+            "Trial": [r.trial_id for r in filtered_sorted],
+            "Metric": [r.metric_name for r in filtered_sorted],
+            "Method": [r.method for r in filtered_sorted],
+            "Score (0–1)": [_safe_drift_score_01(r) for r in filtered_sorted],
         },
     )
 
     st.dataframe(
-        hist_df, use_container_width=True, hide_index=True, height=min(320, 60 + len(hist_df) * 44)
+        hist_df,
+        use_container_width=True,
+        hide_index=True,
+        height=min(320, 60 + len(hist_df) * 44),
+        key="history_df_drift_runs_filtered_overview",
     )
 
     st.subheader("Timeline")
-    st.plotly_chart(fig_change_frequency_histogram(filtered), use_container_width=True)
+    st.plotly_chart(
+        fig_change_frequency_histogram(filtered_sorted),
+        use_container_width=True,
+        key="history_plot_activity_histogram_filtered_runs",
+    )
 
     st.subheader("Per-run evidence")
-    for r in filtered[:40]:
+    for ev_idx, r in enumerate(filtered_sorted[:40]):
         blob = _parse_run_blob(r.details_json)
         lvl, pct, _ = _extract_risk(blob)
-        header = (
-            f"{r.trial_id} · {r.created_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} UTC · {lvl}"
-        )
-        with st.expander(header, expanded=False):
+        rid = getattr(r, "id", None)
+        rid_suffix = str(rid) if rid is not None else "noid"
+        header = f"{r.trial_id} · {_format_run_timestamp_utc(r)} UTC · {lvl}"
+        ev_key = f"history_evidence_expander_row_{ev_idx}_{r.trial_id}_{rid_suffix}"
+        with st.expander(header, expanded=False, key=ev_key):
             if pct is not None:
                 st.progress(int(min(100, max(0, pct))) / 100.0)
             narrative = blob.get("human_readable_summary") or ""
@@ -876,15 +944,15 @@ def tab_drift_history(storage: StorageService) -> None:
                 label="Download full JSON artefact",
                 data=json.dumps(blob, indent=2, sort_keys=True, default=str),
                 file_name=(
-                    f"drift_report_{r.trial_id}_{r.id}_"
-                    f"{r.created_at.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
+                    f"drift_report_{r.trial_id}_{rid_suffix}_"
+                    f"{_run_dt_utc(r).strftime('%Y%m%dT%H%M%SZ')}.json"
                 ),
                 mime="application/json",
-                key=f"dl_hist_{r.id}",
+                key=f"history_dl_full_json_artefact_row_{ev_idx}_{r.trial_id}_{rid_suffix}",
             )
 
 
-def tab_manage_trials(storage: StorageService) -> None:
+def tab_manage_trials(storage: StorageService, settings: Settings) -> None:
     st.markdown("### Add & manage monitored trials")
 
     ingest_left, ingest_right = st.columns((1, 1), gap="large")
@@ -898,9 +966,17 @@ def tab_manage_trials(storage: StorageService) -> None:
         )
         col_a, col_b = st.columns(2)
         with col_a:
-            do_eval = st.toggle("Evaluate drift vs existing baseline first", value=True)
+            do_eval = st.toggle(
+                "Evaluate drift vs existing baseline first",
+                value=True,
+                key="manage_toggle_evaluate_drift_vs_baseline_first",
+            )
         with col_b:
-            skip_duplicate = st.toggle("Skip inserting identical snapshots", value=True)
+            skip_duplicate = st.toggle(
+                "Skip inserting identical snapshots",
+                value=True,
+                key="manage_toggle_skip_duplicate_snapshot_hashes",
+            )
 
         if st.button(
             "Ingest CTIS retrieve payload",
@@ -951,7 +1027,7 @@ def tab_manage_trials(storage: StorageService) -> None:
                 except Exception:
                     logger.exception("Ingest pathway failed")
                     st.error("Unexpected failure during ingestion.")
-                    st.code(traceback.format_exc())
+                    _maybe_show_traceback(settings)
 
         st.markdown(
             "**Note:** Persisted JSON is hashed with canonical ordering for inspection readiness "
@@ -993,7 +1069,10 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
     st.markdown("### API explorer")
     st.caption("Power users — exercise CTIS endpoints with pacing, retries, and typed envelopes.")
 
-    t_search, t_retrieve, t_health = st.tabs(["POST /search", "GET /retrieve/{euct}", "Health"])
+    t_search, t_retrieve, t_health = st.tabs(
+        ["POST /search", "GET /retrieve/{euct}", "Health"],
+        key="explorer_tabs_endpoint_surfaces",
+    )
 
     with t_health:
         if st.button("Run health(search=1)", key="explorer_btn_health_probe"):
@@ -1037,6 +1116,7 @@ def tab_api_explorer(client: CTISAPIClient) -> None:
                             use_container_width=True,
                             hide_index=True,
                             height=min(560, 200 + len(resp.data) * 42),
+                            key="explorer_df_search_response_rows",
                         )
                 except (json.JSONDecodeError, ValidationError) as exc:
                     st.error("Payload invalid.")
@@ -1078,7 +1158,8 @@ def _resolve_audit_history_sort_column(df: pd.DataFrame) -> str | None:
     :class:`~ctis_drift.core.storage.TrialSnapshotRecord` from
     :meth:`~ctis_drift.core.storage.StorageService.get_history` (``timestamp``,
     ``id``, ``euct_number``, …), so we probe those SQLModel names before assuming
-    ``created_utc`` exists.
+    ``created_utc`` exists — avoids ``KeyError`` when callers merge frames or when
+    schema aliases differ (e.g. ``UTC time`` from UI-derived exports).
 
     Ingesting **zero** rows still yields a typed empty frame in
     :func:`render_global_exports`; a bare ``pd.DataFrame([])`` has **no** columns and
@@ -1244,14 +1325,15 @@ def render_app() -> None:
             "3 · Add / manage trials",
             "4 · API explorer",
         ],
+        key="app_shell_tabs_primary_navigation",
     )
 
     with monitored_tab:
-        tab_monitored_trials(storage, client)
+        tab_monitored_trials(storage, client, settings)
     with history_tab:
         tab_drift_history(storage)
     with manage_tab:
-        tab_manage_trials(storage)
+        tab_manage_trials(storage, settings)
     with explorer_tab:
         tab_api_explorer(client)
 
