@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -408,13 +409,32 @@ def run_ctis_check_and_persist(
     return report
 
 
+def clean_ascii(text: str) -> str:
+    """Keep PDF core fonts reliable across environments."""
+    return (
+        text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2011", "-").replace("–", "-")
+    )
+
+
+def _pdf_core_font_text(text: str) -> str:
+    """Helvetica (standard PDF fonts): coerce to printable Latin-1 for fpdf2 ``normalize_text``."""
+    normalized = unicodedata.normalize("NFKD", clean_ascii(text))
+    without_marks = "".join(ch for ch in normalized if unicodedata.combining(ch) == 0)
+    return without_marks.encode("latin-1", "replace").decode("latin-1")
+
+
+def _pdf_line_feed(pdf: FPDF, h: float) -> None:
+    """Vertical gap using ``cell(new_x/new_y=…)`` instead of deprecated ``ln=`` coupling."""
+    pdf.cell(0, h, "", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+
 class _ExportPdfDoc(FPDF):
     def header(self) -> None:  # noqa: PLR6301 signature required by fpdf API
         self.set_font("Helvetica", style="B", size=13)
         self.cell(
             0,
             9,
-            clean_ascii("CTIS Drift Detector — Regulatory export snapshot"),
+            _pdf_core_font_text("CTIS Drift Detector — Regulatory export snapshot"),
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
         )
@@ -422,11 +442,13 @@ class _ExportPdfDoc(FPDF):
         self.cell(
             0,
             5,
-            clean_ascii(f"UTC generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}"),
+            _pdf_core_font_text(
+                f"UTC generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}"
+            ),
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
         )
-        self.ln(2)
+        _pdf_line_feed(self, 2)
 
     def footer(self) -> None:  # noqa: PLR6301 signature required by fpdf API
         self.set_y(-14)
@@ -435,7 +457,7 @@ class _ExportPdfDoc(FPDF):
         self.multi_cell(
             0,
             4,
-            text=clean_ascii(APP_ATTRIBUTION),
+            text=_pdf_core_font_text(APP_ATTRIBUTION),
             align="C",
             border=0,
             new_x=XPos.LMARGIN,
@@ -443,18 +465,12 @@ class _ExportPdfDoc(FPDF):
         )
 
 
-def clean_ascii(text: str) -> str:
-    """Keep PDF core fonts reliable across environments."""
-    return (
-        text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2011", "-").replace("–", "-")
-    )
-
-
 def export_workbook_bytes(
     monitored: pd.DataFrame,
     hist: pd.DataFrame,
 ) -> bytes:
     bio = BytesIO()
+    audit_ts = datetime.now(UTC).isoformat(timespec="seconds")
     sheet_a = monitored.copy()
     sheet_b = hist.copy()
     try:
@@ -473,42 +489,60 @@ def export_workbook_bytes(
             meta.to_excel(writer, index=False, sheet_name="Document_control")
         return bio.getvalue()
     except Exception:
-        log_unexpected_error(logger, "Excel workbook export failed")
+        log_unexpected_error(
+            logger,
+            f"Excel workbook export failed (UTC {audit_ts}) "
+            f"rows_monitoring={sheet_a.shape[0]} rows_drift_audit={sheet_b.shape[0]}",
+        )
         raise
 
 
 def export_pdf_bytes(
     monitored_headline: str, hist_rows_sample: Iterable[Mapping[str, Any]]
 ) -> bytes:
-    pdf = _ExportPdfDoc()
-    pdf.set_auto_page_break(True, margin=14)
-    pdf.add_page()
-    pdf.set_font("Helvetica", size=11)
-    pdf.write(h=6, text=clean_ascii(monitored_headline))
-    pdf.ln(10)
-    pdf.set_font("Helvetica", style="B", size=10)
-    pdf.write(h=7, text=clean_ascii("Recent drift evaluations (excerpt):"))
-    pdf.ln(7)
-    pdf.set_font("Helvetica", size=9)
-    for row in hist_rows_sample:
-        line = "; ".join(f"{k}: {row[k]}" for k in sorted(row.keys()))
-        if len(line) > 112:
-            line = line[:109] + "..."
-        pdf.multi_cell(
-            0,
-            5,
-            text=clean_ascii(line),
-            border="B",
-            new_x=XPos.LMARGIN,
-            new_y=YPos.NEXT,
-        )
+    """Build a concise PDF appendix; UTF-8 audit fields are folded to Latin-1 for core fonts."""
 
-    bio_raw = pdf.output()
-    if isinstance(bio_raw, (bytes, bytearray)):
-        return bytes(bio_raw)
-    if isinstance(bio_raw, str):
-        return bio_raw.encode("latin-1")
-    return bytes(bio_raw)
+    exported_at = datetime.now(UTC).isoformat(timespec="seconds")
+    rows_materialized = list(hist_rows_sample)
+    excerpt_n = len(rows_materialized)
+
+    try:
+        pdf = _ExportPdfDoc()
+        pdf.set_auto_page_break(auto=True, margin=14)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=11)
+        pdf.write(h=6, text=_pdf_core_font_text(monitored_headline))
+        _pdf_line_feed(pdf, 10)
+        pdf.set_font("Helvetica", style="B", size=10)
+        pdf.write(h=7, text=_pdf_core_font_text("Recent drift evaluations (excerpt):"))
+        _pdf_line_feed(pdf, 7)
+        pdf.set_font("Helvetica", size=9)
+        for row in rows_materialized:
+            line = "; ".join(f"{k}: {row[k]}" for k in sorted(row.keys()))
+            line = line if len(line) <= 112 else line[:109] + "..."
+            pdf.multi_cell(
+                0,
+                5,
+                text=_pdf_core_font_text(line),
+                border="B",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+
+        out_buf = BytesIO()
+        pdf.output(name=out_buf)
+        payload = out_buf.getvalue()
+        if len(payload) < 8 or not payload.startswith(b"%PDF"):
+            msg = "PDF exporter returned an unexpected stream shape"
+            raise RuntimeError(msg)
+        return bytes(payload)
+    except Exception:
+        log_unexpected_error(
+            logger,
+            f"PDF summary export failed (UTC {exported_at}) excerpt_rows={excerpt_n} "
+            f"headline_chars={len(monitored_headline)}",
+        )
+        raise
 
 
 def build_ctis_api_client(settings: Settings) -> CTISAPIClient:

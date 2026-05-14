@@ -180,6 +180,11 @@ _SCENARIO_ROWS: Final[list[tuple[str, str, str]]] = [
         "test_export_pdf_with_no_sample_rows",
     ),
     (
+        "Export - PDF core-font coercion for Unicode audit payloads",
+        "Non-Latin-1 symbols render without exporter exception",
+        "test_export_pdf_coerces_audit_unicode_for_core_fonts",
+    ),
+    (
         "Workflow isolation - neighbouring trials survive one failed CTIS retrieve",
         "Sequential UX contract: BAD trial raises typed error; GOOD trial persists run",
         "test_robustness_one_trial_fails_others_can_succeed",
@@ -583,6 +588,15 @@ def test_export_pdf_with_no_sample_rows() -> None:
     """PDF exporter should emit header/footer even when audit rows absent."""
 
     pdf = export_pdf_bytes("0 trials registered — cold start snapshot.", [])
+    assert pdf.startswith(b"%PDF")
+
+
+def test_export_pdf_coerces_audit_unicode_for_core_fonts() -> None:
+    """Non-Latin-1 drift fields must not raise at PDF render time."""
+
+    headline = "Headline €"
+    sample = [{"trial_id": "2024-demo-00", "note": "\u2014 EUR \u20ac symbol"}]
+    pdf = export_pdf_bytes(headline, sample)
     assert pdf.startswith(b"%PDF")
 
 

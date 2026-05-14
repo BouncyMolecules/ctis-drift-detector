@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ctis_drift.config import get_settings
 from ctis_drift.constants import APP_ATTRIBUTION
+from ctis_drift.cockpit import fetch_trial_records
 from ctis_drift.ui import streamlit_env
 from ctis_drift.ui.bootstrap import bootstrap_runtime
 from ctis_drift.ui.pages.api_explorer import tab_api_explorer
@@ -12,7 +13,7 @@ from ctis_drift.ui.pages.manage_trials import tab_manage_trials
 from ctis_drift.ui.pages.monitored_trials import tab_monitored_trials
 from ctis_drift.ui.sidebar import sidebar_shell
 from ctis_drift.ui.utils.session import _init_session_defaults
-from ctis_drift.ui.utils.theme import inject_app_theme_styles
+from ctis_drift.ui.utils.theme import inject_app_theme_styles, render_onboarding_banner
 from ctis_drift.utils.logging import setup_logging
 
 
@@ -48,12 +49,16 @@ def render_app() -> None:
     storage, client = bootstrap_runtime(settings)
     sidebar_shell(settings, storage)
 
+    trial_count = len(fetch_trial_records(storage))
+    render_onboarding_banner(trial_count=trial_count)
+
     ste.markdown(
         '<main class="ctis-shell" role="main">'
         "<h2>Clinical vigilance cockpit</h2>"
-        "<p style='margin-top:0.35rem;color:#4a5b66;margin-bottom:1.35rem'>"
+        '<p class="ctis-hero-subtitle">'
         "Operate a sponsor-grade monitoring desk for CTIS artefacts: cryptographic baselines, "
-        "risk-graded deltas, audit exports, and direct API ergonomics.</p>"
+        "risk-graded deltas, audit exports, and direct API ergonomics."
+        "</p>"
         "</main>",
         unsafe_allow_html=True,
     )

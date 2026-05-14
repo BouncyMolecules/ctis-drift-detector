@@ -51,7 +51,7 @@ def tab_monitored_trials(
 
     ste.markdown(
         '<div class="ctis-shell"><h3>Monitored portfolio</h3>'
-        "<p style='margin-top:0.35rem;color:#4a5b66;'>"
+        "<p class='ctis-muted-page-lede'>"
         "Live registry from your local audit database and last evaluation metadata.</p></div>",
         unsafe_allow_html=True,
     )

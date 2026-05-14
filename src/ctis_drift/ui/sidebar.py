@@ -82,7 +82,10 @@ def render_global_exports(storage: StorageService) -> None:
         except Exception:
             log_unexpected_error(logger, "Excel export blocked")
             ste.error(
-                "Excel export unavailable (see logs). Confirm `openpyxl` installation.",
+                f"Excel export unavailable as of "
+                f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC. "
+                "Confirm `openpyxl` is installed and that the workbook is not corrupted. "
+                "Set `CTIS_DRIFT_LOG_LEVEL=DEBUG` for a full traceback in server logs.",
             )
 
     with ex2:
@@ -102,7 +105,11 @@ def render_global_exports(storage: StorageService) -> None:
         except Exception:
             log_unexpected_error(logger, "PDF export blocked")
             ste.error(
-                "PDF export failed — consult server logs regarding fpdf runtime.",
+                f"PDF export unavailable as of "
+                f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC "
+                "(summary uses PDF core fonts; see logs for exporter diagnostics). "
+                "Use the Excel audit bundle if the fault persists — it preserves UTF-8. "
+                "Set `CTIS_DRIFT_LOG_LEVEL=DEBUG` for a full traceback in server logs.",
             )
 
 
