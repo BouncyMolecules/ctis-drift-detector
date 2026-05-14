@@ -1,3 +1,11 @@
+# =============================================================================
+# Final requirements.txt — production deploy (Streamlit Community Cloud)
+# =============================================================================
+# Use with Advanced settings → Python 3.11. Lower bounds (>=) keep installs
+# fast and wheel-based on Cloud’s manylinux image; avoid == pins unless you
+# need byte-for-byte reproducibility outside Cloud.
+# =============================================================================
+
 # -----------------------------------------------------------------------------
 # Streamlit Community Cloud — dependency policy
 # -----------------------------------------------------------------------------
@@ -11,15 +19,17 @@
 # (matches pyproject.toml requires-python).
 # -----------------------------------------------------------------------------
 
-# UI & charts
-streamlit>=1.40.0
+# UI & charts (>=1.55: layout widgets accept explicit ``key=`` for stable identity / mypy)
+streamlit>=1.55.0
 plotly>=5.24.0
 
-# HTTP & env (CTIS transport; Streamlit / ecosystem stacks often expect requests)
+# HTTP & env (CTIS transport via httpx)
 httpx>=0.27.0
-requests>=2.32.0
 
 # Data & exports
+# numpy: explicit floor aligns the numeric stack with pandas on py3.11 and
+# reduces resolver weirdness on constrained Cloud runners.
+numpy>=1.26.0
 pandas>=2.2.0
 openpyxl>=3.1.0
 fpdf2>=2.8.0

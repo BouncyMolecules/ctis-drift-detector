@@ -32,6 +32,8 @@ class Settings(BaseSettings):
         default="sqlite:///data/ctis_drift.db",
         validation_alias="CTIS_DRIFT_DATABASE_URL",
     )
+    # When True, outbound CTIS-shaped calls use ``httpx.MockTransport`` so demos work without
+    # reaching euclinicaltrials.eu (see ``ctis_mock_transport.create_mock_ctis_http_client``).
     enable_mock_api: bool = Field(default=False, validation_alias="CTIS_DRIFT_ENABLE_MOCK_API")
 
     @field_validator("api_base_url")

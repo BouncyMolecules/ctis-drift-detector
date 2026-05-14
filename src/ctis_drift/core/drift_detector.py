@@ -369,6 +369,7 @@ class DriftReport(BaseModel):
         ),
     )
 
+    # Stacked ``@computed_field`` + ``@property`` is valid for Pydantic v2 but not for mypy.
     @computed_field(return_type=float)  # type: ignore[prop-decorator]
     @property
     def drift_score(self) -> float:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
@@ -28,10 +29,12 @@ def main() -> None:
         from ctis_drift.main import main as run_application
     except ImportError:
         logging.basicConfig(level=logging.INFO)
-        logging.getLogger(__name__).exception(
-            "Failed to import ctis_drift; verify src/ctis_drift exists and dependencies are installed."
+        log = logging.getLogger(__name__)
+        log.exception(
+            "Failed to import ctis_drift; verify package layout "
+            "(src/ctis_drift) and installed dependencies."
         )
-        try:
+        with suppress(StreamlitAPIException):
             st.set_page_config(
                 layout="wide",
                 page_title="CTIS Drift Sentinel | Startup",
@@ -39,18 +42,16 @@ def main() -> None:
                 initial_sidebar_state="collapsed",
                 menu_items={"Get help": None, "Report a bug": None, "About": None},
             )
-        except StreamlitAPIException:
-            pass
         st.title("Application failed to initialise")
         st.error(
             "The CTIS Drift Sentinel package could not be loaded. For Streamlit Cloud, confirm "
-            "**Main file path** is `app.py`, **Dependencies file** resolves (e.g. `requirements.txt`), "
-            "and the repository contains `src/ctis_drift`."
+            "the repository contains `src/ctis_drift`, **Main file path** is `app.py`, and your "
+            "dependencies file resolves (for example `requirements.txt`)."
         )
-        with st.expander("Technical detail (for administrators)"):
-            import traceback
-
-            st.code(traceback.format_exc())
+        st.caption(
+            "Administrators should inspect stderr or container logs where this process runs; "
+            "set CTIS_DRIFT_LOG_LEVEL=DEBUG locally for finer-grained diagnostics."
+        )
         st.stop()
 
     run_application()

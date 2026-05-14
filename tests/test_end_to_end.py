@@ -30,9 +30,10 @@ Filter by marker (same tests; markers describe behaviour)::
 
 from __future__ import annotations
 
+import copy
 import json
 import os
-import copy
+from collections.abc import Generator
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -77,7 +78,7 @@ pytestmark = [
 
 
 @pytest.fixture(scope="module")
-def ctis_public_client() -> CtisPublicClient:
+def ctis_public_client() -> Generator[CtisPublicClient, None, None]:
     """Shared, courteously paced HTTP client (module scope amortises TLS handshakes)."""
 
     with CtisPublicClient(
@@ -335,4 +336,3 @@ def pd_audit_frame(runs: list[DriftRunRecord]) -> Any:
             for r in runs
         ],
     )
-

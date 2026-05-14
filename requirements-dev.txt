@@ -1,0 +1,4 @@
+# Typing, tests, and lint (not required on Streamlit Community Cloud runtime).
+# After: pip install -r requirements.txt
+# Run:   pip install -r requirements-dev.txt
+-e .[dev]

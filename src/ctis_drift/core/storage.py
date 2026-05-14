@@ -212,10 +212,10 @@ class StorageService:
             drift_score=report.drift_score,
             method=report.method,
             details_json=json.dumps(
-            report.model_dump(mode="json"),
-            sort_keys=True,
-            default=str,
-        ),
+                report.model_dump(mode="json"),
+                sort_keys=True,
+                default=str,
+            ),
         )
         with self.session() as session:
             session.add(record)

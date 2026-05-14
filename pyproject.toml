@@ -5,16 +5,23 @@ build-backend = "hatchling.build"
 [project]
 name = "ctis-drift-detector"
 version = "0.1.0"
-description = "Production-grade Streamlit app for CTIS clinical trial drift detection."
+description = "EU CTIS public-artefact drift surveillance: cryptographically anchored snapshots, risk-graded change detection, Streamlit cockpit, and audit-ready exports for Regulatory Operations."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "CTIS Drift Team" }]
-keywords = ["streamlit", "ctis", "drift-detection", "clinical-trials"]
+authors = [{ name = "Ela Halilovic" }]
+keywords = [
+    "streamlit",
+    "ctis",
+    "clinical-trials",
+    "regulatory-operations",
+    "drift-detection",
+    "eu-clinical-trials",
+    "digital-transformation",
+]
 dependencies = [
-    "streamlit>=1.40.0",
+    "streamlit>=1.55.0",
     "httpx>=0.27.0",
-    "requests>=2.32.0",
     "pandas>=2.2.0",
     "openpyxl>=3.1.0",
     "fpdf2>=2.8.0",
@@ -24,18 +31,36 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "python-dotenv>=1.0.0",
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 
 [project.optional-dependencies]
 dev = [
     "mypy>=1.13.0",
     "pytest>=8.3.0",
     "ruff>=0.8.0",
-    "types-requests>=2.32.0",
     "pandas-stubs>=2.2.0",
+    "types-fpdf2>=2.8.4",
+    "types-openpyxl>=3.1.5",
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/ctis-drift-detector"
+Homepage = "https://github.com/BouncyMolecules/ctis-drift-detector"
+Repository = "https://github.com/BouncyMolecules/ctis-drift-detector"
+Documentation = "https://github.com/BouncyMolecules/ctis-drift-detector#readme"
+Issues = "https://github.com/BouncyMolecules/ctis-drift-detector/issues"
+Changelog = "https://github.com/BouncyMolecules/ctis-drift-detector/releases"
+Demo = "https://ctis-drift-detector.streamlit.app"
 
 [project.scripts]
 ctis-drift-app = "ctis_drift.__main__:main"
@@ -57,6 +82,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+files = "src/ctis_drift, tests"
+explicit_package_bases = true
 warn_unused_ignores = true
 warn_return_any = true
 disallow_untyped_defs = true
@@ -70,10 +97,6 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "sqlalchemy.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "streamlit.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
