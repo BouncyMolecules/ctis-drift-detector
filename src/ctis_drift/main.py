@@ -303,11 +303,87 @@ def plotly_palette(n: int) -> list[str]:
     return palette
 
 
+def _drift_run_sort_key(run: DriftRunRecord) -> tuple[int, float, int]:
+    """Stable chronological ordering without assuming ``created_at`` is always populated.
+
+    Falls back to monotonic ``id`` (SQLite PK) when timestamps are absent so portfolios
+    with partially migrated rows still chart instead of throwing.
+    """
+
+    ts = getattr(run, "created_at", None)
+    if isinstance(ts, datetime):
+        return (0, ts.astimezone(UTC).timestamp(), int(getattr(run, "id", 0) or 0))
+    rid = getattr(run, "id", None)
+    if isinstance(rid, int):
+        return (1, float(rid), rid)
+    return (2, 0.0, 0)
+
+
+def _run_dt_utc(run: DriftRunRecord) -> datetime:
+    """Best-effort evaluation instant for plotting (aligns with DriftRun / snapshot wording)."""
+
+    ts = getattr(run, "created_at", None)
+    if isinstance(ts, datetime):
+        return ts.astimezone(UTC)
+    # Extremely defensive: orphaned rows — anchor to UNIX epoch rather than crashing the chart.
+    return datetime.fromtimestamp(0, tz=UTC)
+
+
 def fig_risk_trend(runs_for_trial: Sequence[DriftRunRecord], *, title: str) -> go.Figure:
-    ascending = sorted(runs_for_trial, key=lambda r: r.created_at)
+    ascending = sorted(runs_for_trial, key=_drift_run_sort_key)
     if not ascending:
         fig = go.Figure()
         fig.update_layout(template="plotly_white", title=title + " — no data")
+        return fig
+
+    # Single evaluation: spline lines are pointless (and some renderers degrade); markers + bands stay crisp.
+    if len(ascending) == 1:
+        fig = go.Figure()
+        r0 = ascending[0]
+        blob0 = _parse_run_blob(r0.details_json)
+        lvl0, pct0, _ = _extract_risk(blob0)
+        if pct0 is None:
+            try:
+                pct0 = round(float(r0.drift_score) * 100.0, 4)
+            except (TypeError, ValueError):
+                pct0 = 0.0
+        pct0 = max(0.0, min(100.0, float(pct0)))
+        level_for_color = lvl0 if lvl0 in {e.value for e in RiskLevel} else _level_from_pct(pct0)
+        marker_colors_single = [_risk_marker_color(level_for_color)]
+        fig.add_trace(
+            go.Scatter(
+                x=[_run_dt_utc(r0)],
+                y=[pct0],
+                mode="markers",
+                name="Risk score (0–100)",
+                marker=dict(color=marker_colors_single, size=14, symbol="square", line=dict(width=0.5)),
+                hovertemplate="%{x|%Y-%m-%d %H:%M} UTC<br>Score %{y:.1f}<extra></extra>",
+            ),
+        )
+        fig.update_yaxes(range=[0.0, 100.0])
+        thresholds = [(24.5, "LOW"), (49.5, "MEDIUM"), (79.5, "HIGH")]
+        for y_band, lbl in thresholds:
+            fig.add_hline(
+                y=y_band,
+                line_dash="dot",
+                line_color="rgba(23,36,46,0.28)",
+                annotation_text=lbl + " cutoff",
+                annotation_position="bottom right",
+            )
+        fig.update_layout(
+            template="plotly_white",
+            title=dict(
+                text=title,
+                subtitle=dict(text="Single evaluation logged — spline trend unlocks after the next run."),
+            ),
+            height=420,
+            margin=dict(l=50, r=30, t=70, b=62),
+            xaxis=dict(title="Time (UTC)"),
+            yaxis=dict(title="Risk score (0–100)"),
+            hovermode="x unified",
+            font=dict(family="Segoe UI, Inter, Helvetica, Arial, sans-serif", size=12),
+            title_font=dict(size=16),
+        )
         return fig
 
     ts: list[datetime] = []
@@ -315,7 +391,7 @@ def fig_risk_trend(runs_for_trial: Sequence[DriftRunRecord], *, title: str) -> g
     lvls: list[str] = []
 
     for r in ascending:
-        ts.append(r.created_at.astimezone(UTC))
+        ts.append(_run_dt_utc(r))
         blob = _parse_run_blob(r.details_json)
         lvl, pct, _ = _extract_risk(blob)
         if pct is None:
@@ -331,8 +407,10 @@ def fig_risk_trend(runs_for_trial: Sequence[DriftRunRecord], *, title: str) -> g
     fig = go.Figure()
 
     marker_colors = [_risk_marker_color(lvl_band) for lvl_band in lvls]
+
+    # go.Scattergl rejects ``line.shape='spline'`` (WebGL scatter); standard Scatter supports splines.
     fig.add_trace(
-        go.Scattergl(
+        go.Scatter(
             x=ts,
             y=pct_raw,
             mode="lines+markers",
@@ -996,21 +1074,62 @@ def _resolve_audit_history_sort_column(df: pd.DataFrame) -> str | None:
     """Pick a column for newest-first drift-history sorting.
 
     The export sheet labels evaluation time ``created_utc`` (ISO string from
-    :class:`~ctis_drift.core.storage.DriftRunRecord`). Other layers or future
-    refactors may align frame columns with SQLModel field names—for example
-    ``timestamp`` on snapshot rows—or the list comprehension may yield **zero
-    rows**, in which case pandas builds an empty DataFrame with **no columns**
-    and ``sort_values(by="created_utc")`` raises ``KeyError`` on Streamlit Cloud.
+    :class:`~ctis_drift.core.storage.DriftRunRecord`). Snapshot audit rows mirror
+    :class:`~ctis_drift.core.storage.TrialSnapshotRecord` from
+    :meth:`~ctis_drift.core.storage.StorageService.get_history` (``timestamp``,
+    ``id``, ``euct_number``, …), so we probe those SQLModel names before assuming
+    ``created_utc`` exists.
 
-    Resolution prefers chronological-looking columns, then ``id``, then falls back to
-    the first remaining column so exports stay operational across schema drift.
+    Ingesting **zero** rows still yields a typed empty frame in
+    :func:`render_global_exports`; a bare ``pd.DataFrame([])`` has **no** columns and
+    any hard-coded ``sort_values("created_utc")`` surfaces as ``KeyError`` on
+    Streamlit Community Cloud.
     """
+
     if df.shape[1] == 0:
         return None
-    for candidate in ("created_utc", "timestamp", "created_at", "UTC time", "id"):
+    for candidate in (
+        "created_utc",
+        "timestamp",
+        "created_at",
+        "last_checked",
+        "first_seen_at",
+        "UTC time",
+        "id",
+    ):
         if candidate in df.columns:
             return candidate
     return str(df.columns[0])
+
+
+# Canonical drift audit headers for Excel/PDF; empty exports keep this schema so sort/export
+# paths never reference a column that was never materialised.
+_DRIFT_HIST_EXPORT_COLUMNS: Final[tuple[str, ...]] = (
+    "created_utc",
+    "trial_id",
+    "metric_name",
+    "drift_score_0_1",
+    "method",
+    "risk_band",
+)
+
+
+def _audit_row_from_run(r: DriftRunRecord) -> dict[str, Any]:
+    """One export row with tolerant timestamp serialisation (mirrors storage field names)."""
+
+    ts = getattr(r, "created_at", None)
+    if isinstance(ts, datetime):
+        created_utc = ts.isoformat(timespec="seconds")
+    else:
+        created_utc = ""
+    return {
+        "created_utc": created_utc,
+        "trial_id": getattr(r, "trial_id", "") or "",
+        "metric_name": getattr(r, "metric_name", "") or "",
+        "drift_score_0_1": getattr(r, "drift_score", None),
+        "method": getattr(r, "method", "") or "",
+        "risk_band": _extract_risk(_parse_run_blob(getattr(r, "details_json", None)))[0],
+    }
 
 
 def render_global_exports(storage: StorageService) -> None:
@@ -1025,40 +1144,33 @@ def render_global_exports(storage: StorageService) -> None:
             "sheet; drift history fills after the first evaluations."
         )
 
-    hist = pd.DataFrame(
-        [
-            {
-                "created_utc": r.created_at.isoformat(timespec="seconds"),
-                "trial_id": r.trial_id,
-                "metric_name": r.metric_name,
-                "drift_score_0_1": r.drift_score,
-                "method": r.method,
-                "risk_band": _extract_risk(_parse_run_blob(r.details_json))[0],
-            }
-            for r in runs
-        ]
-    )
+    hist = pd.DataFrame([_audit_row_from_run(r) for r in runs])
+    if hist.empty:
+        # Critical for Cloud stability: empty list → DataFrame with zero columns → KeyError on sort.
+        hist = pd.DataFrame(columns=list(_DRIFT_HIST_EXPORT_COLUMNS))
 
-    # Empty run lists produce a column-less frame; sorting must skip until data exists.
-    if hist.shape[1] == 0:
+    if hist.empty or not runs:
         st.info(
             "No archived drift evaluations yet. Workbook and PDF exports still "
             "include the monitoring register and an empty drift history sheet."
         )
-        sample_rows: list[dict[str, Any]] = []
-    else:
-        sort_col = _resolve_audit_history_sort_column(hist)
-        hist_ordered = (
-            hist.sort_values(by=sort_col, ascending=False, na_position="last")
-            if sort_col is not None
-            else hist
-        )
-        sample_rows = list(hist_ordered.head(30).astype(str).to_dict("records"))
+
+    sort_col = _resolve_audit_history_sort_column(hist)
+    hist_for_export = hist
+    if sort_col is not None and sort_col in hist.columns and not hist.empty:
+        try:
+            hist_for_export = hist.sort_values(by=sort_col, ascending=False, na_position="last")
+        except Exception:
+            logger.exception("Drift history sort failed; exporting unsorted rows")
+            hist_for_export = hist
+    sample_rows: list[dict[str, Any]] = (
+        [] if hist_for_export.empty else list(hist_for_export.head(30).astype(str).to_dict("records"))
+    )
 
     ex1, ex2 = st.columns(2)
     with ex1:
         try:
-            xbytes = export_workbook_bytes(df_mon, hist)
+            xbytes = export_workbook_bytes(df_mon, hist_for_export)
             st.download_button(
                 "Export workbook (Excel, TMF-friendly)",
                 data=xbytes,
@@ -1074,7 +1186,7 @@ def render_global_exports(storage: StorageService) -> None:
     with ex2:
         try:
             pbytes = export_pdf_bytes(
-                f"{len(df_mon)} trials registered; {len(hist)} evaluation rows archived.",
+                f"{len(df_mon)} trials registered; {len(hist_for_export)} evaluation rows archived.",
                 cast(Iterable[Mapping[str, Any]], sample_rows),
             )
             st.download_button(
